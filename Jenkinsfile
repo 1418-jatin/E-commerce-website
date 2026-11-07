@@ -1,5 +1,5 @@
 pipeline {
-    // Runs on the EC2 instance registered as a Jenkins node with label "ci-agent"
+    // Runs on the EC2 instance registered in Jenkins as a node with label "linux-agent"
     agent { label 'linux-agent' }
 
     environment {
@@ -7,12 +7,12 @@ pipeline {
         // Exposes DOCKERHUB_CRED_USR and DOCKERHUB_CRED_PSW
         DOCKERHUB_CRED = credentials('dockerhub-cred')
 
-        APP_NAME     = 'stylo-shop'
-        IMAGE_REPO   = "19901418/prt-oct-25th"
-        IMAGE_TAG    = "${BUILD_NUMBER}"
+        APP_NAME      = 'stylo-shop'
+        IMAGE_REPO    = '19901418/prt-oct-25th'
+        IMAGE_TAG     = "${BUILD_NUMBER}"
 
-        // >>> CHANGE THIS: private/public IP of your Kubernetes node EC2 instance
-        K8S_NODE_IP  = '77.113.72.193'
+        // Private IP of the k8s-node EC2 instance (same VPC as ci-agent)
+        K8S_NODE_IP   = '172.31.45.11'
         K8S_NODE_USER = 'ubuntu'
     }
 
@@ -48,20 +48,27 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
-                // ubuntu-cred = "SSH Username with private key" credential
-                sshagent(credentials: ['ubuntu-cred']) {
+                // k8s-node-ssh = "SSH Username with private key" credential (key from ~/.ssh/jenkins_k8s)
+                sshagent(credentials: ['k8s-node-ssh']) {
                     sh '''
-                        # Inject the freshly built image tag into the manifest
-                        sed -i "s|IMAGE_PLACEHOLDER|${IMAGE_REPO}:${IMAGE_TAG}|g" k8s/deployment.yaml
+                        # Inject the freshly built image tag into the deployment manifest
+                        sed -i "s|IMAGE_PLACEHOLDER|${IMAGE_REPO}:${IMAGE_TAG}|g" k8s/deployment.yml
 
                         SSH_OPTS="-o StrictHostKeyChecking=no"
+                        REMOTE="${K8S_NODE_USER}@${K8S_NODE_IP}"
+                        REMOTE_DIR="~/${APP_NAME}-k8s"
 
-                        ssh $SSH_OPTS ${K8S_NODE_USER}@${K8S_NODE_IP} "mkdir -p ~/${APP_NAME}-k8s"
-                        scp $SSH_OPTS k8s/*.yaml ${K8S_NODE_USER}@${K8S_NODE_IP}:~/${APP_NAME}-k8s/
+                        # Copy both manifests to the Kubernetes node
+                        ssh $SSH_OPTS $REMOTE "mkdir -p ${REMOTE_DIR}"
+                        scp $SSH_OPTS k8s/deployment.yml k8s/service.yml $REMOTE:${REMOTE_DIR}/
 
-                        ssh $SSH_OPTS ${K8S_NODE_USER}@${K8S_NODE_IP} "
-                            kubectl apply -f ~/${APP_NAME}-k8s/ &&
-                            kubectl rollout status deployment/${APP_NAME} --timeout=120s
+                        # Apply deployment + service, then wait for the rollout
+                        ssh $SSH_OPTS $REMOTE "
+                            export PATH=\\$PATH:/snap/bin:/usr/local/bin &&
+                            kubectl apply -f ${REMOTE_DIR}/deployment.yml &&
+                            kubectl apply -f ${REMOTE_DIR}/service.yml &&
+                            kubectl rollout status deployment/${APP_NAME} --timeout=120s &&
+                            kubectl get pods,svc -l app=${APP_NAME}
                         "
                     '''
                 }
@@ -75,7 +82,7 @@ pipeline {
             sh 'docker image prune -f || true'
         }
         success {
-            echo "Deployed ${IMAGE_REPO}:${IMAGE_TAG} -> http://${K8S_NODE_IP}:30080"
+            echo "Deployed ${IMAGE_REPO}:${IMAGE_TAG} to the Kubernetes node."
         }
         failure {
             echo 'Pipeline failed. Check the stage logs above.'
