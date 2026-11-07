@@ -11,7 +11,7 @@ pipeline {
         IMAGE_REPO    = '19901418/prt-oct-25th'
         IMAGE_TAG     = "${BUILD_NUMBER}"
 
-        // Private IP of the k8s-node EC2 instance (same VPC as ci-agent)
+        // Private IP of the k8s-node EC2 instance (same VPC as the agent)
         K8S_NODE_IP   = '172.31.45.11'
         K8S_NODE_USER = 'ubuntu'
     }
@@ -48,13 +48,14 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
-                // k8s-node-ssh = "SSH Username with private key" credential (key from ~/.ssh/jenkins_k8s)
-                sshagent(credentials: ['k8s-node-ssh']) {
+                // ubuntu-cred = "SSH Username with private key" credential (same key used for the agent EC2 instances)
+                // No SSH Agent plugin needed: the key is written to a temp file by withCredentials
+                withCredentials([sshUserPrivateKey(credentialsId: 'ubuntu-cred', keyFileVariable: 'SSH_KEY')]) {
                     sh '''
                         # Inject the freshly built image tag into the deployment manifest
                         sed -i "s|IMAGE_PLACEHOLDER|${IMAGE_REPO}:${IMAGE_TAG}|g" k8s/deployment.yml
 
-                        SSH_OPTS="-o StrictHostKeyChecking=no"
+                        SSH_OPTS="-i $SSH_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=no"
                         REMOTE="${K8S_NODE_USER}@${K8S_NODE_IP}"
                         REMOTE_DIR="~/${APP_NAME}-k8s"
 
