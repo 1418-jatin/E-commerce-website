@@ -1,6 +1,6 @@
 pipeline {
     // Runs on the EC2 instance registered as a Jenkins node with label "ci-agent"
-    agent { label 'ci-agent' }
+    agent { label 'linux-agent' }
 
     environment {
         // Username/password credential (ID: dockerhub-cred)
@@ -8,11 +8,11 @@ pipeline {
         DOCKERHUB_CRED = credentials('dockerhub-cred')
 
         APP_NAME     = 'stylo-shop'
-        IMAGE_REPO   = "${DOCKERHUB_CRED_USR}/${APP_NAME}"
+        IMAGE_REPO   = "19901418/prt-oct-25th"
         IMAGE_TAG    = "${BUILD_NUMBER}"
 
         // >>> CHANGE THIS: private/public IP of your Kubernetes node EC2 instance
-        K8S_NODE_IP  = 'REPLACE_WITH_K8S_NODE_IP'
+        K8S_NODE_IP  = '77.113.72.193'
         K8S_NODE_USER = 'ubuntu'
     }
 
